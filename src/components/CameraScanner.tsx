@@ -198,7 +198,7 @@ export default function CameraScanner({ onSaveItem }: Props) {
   const ocrLabel = (() => {
     switch (ocrStatus) {
       case 'scanning':
-        return 'Processing via secure proxy…'
+        return 'Analyzing with open-source AI…'
       case 'done':
         return ocrRawText ? 'Text detected' : 'No text found'
       case 'error':
@@ -304,7 +304,7 @@ export default function CameraScanner({ onSaveItem }: Props) {
               </div>
               <div className="text-center">
                 <p className="text-sm font-semibold text-white">
-                  Processing via secure proxy…
+                  Analyzing with open-source AI…
                 </p>
                 <div className="mt-2 w-36 mx-auto">
                   <div className="h-1 rounded-full bg-white/10 overflow-hidden relative">
