@@ -6,6 +6,8 @@ export interface SavedItem {
   id: string
   productName: string
   batchNo: string
+  mfgDate?: string
+  expDate?: string
   timestamp: number
   thumbnail: string | null
 }

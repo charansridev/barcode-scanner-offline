@@ -22,6 +22,7 @@
     "workbox-window": "^7.4.1"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   }

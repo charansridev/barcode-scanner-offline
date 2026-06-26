@@ -1,7 +1,10 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
+import { GoogleGenerativeAI } from "@google/generative-ai"
 import type { SavedItem } from '../App'
 import { extractBatchNumber } from '../utils/extractBatchNumber'
 import type { BatchExtractionResult } from '../utils/extractBatchNumber'
+import { extractMfgDate, extractExpDate } from '../utils/extractDates'
+import type { DateExtractionResult } from '../utils/extractDates'
 
 interface Props {
   onSaveItem: (item: SavedItem) => void
@@ -23,15 +26,23 @@ export default function CameraScanner({ onSaveItem }: Props) {
 
   // OCR state
   const [ocrStatus, setOcrStatus] = useState<OcrStatus>('idle')
+  const [ocrErrorMsg, setOcrErrorMsg] = useState<string>('')
   const [ocrRawText, setOcrRawText] = useState('')
   const [batchConfidence, setBatchConfidence] = useState<BatchExtractionResult['confidence']>('low')
+  const [mfgDate, setMfgDate] = useState('')
+  const [mfgConfidence, setMfgConfidence] = useState<DateExtractionResult['confidence']>('low')
+  const [expDate, setExpDate] = useState('')
+  const [expConfidence, setExpConfidence] = useState<DateExtractionResult['confidence']>('low')
 
   /* ── Run OCR on Canvas via Vercel Backend ─────────────── */
   const runOcr = useCallback(
     async (canvas: HTMLCanvasElement) => {
       setOcrStatus('scanning')
+      setOcrErrorMsg('')
       setOcrRawText('')
       setBatchConfidence('low')
+      setMfgConfidence('low')
+      setExpConfidence('low')
 
       try {
         const blob = await new Promise<Blob | null>((resolve) => 
@@ -40,20 +51,43 @@ export default function CameraScanner({ onSaveItem }: Props) {
         
         if (!blob) throw new Error('Failed to create image blob')
         
-        // Proxy the request through our Vercel Serverless Function
-        const res = await fetch('/api/scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: blob
-        })
-
-        if (!res.ok) {
-          const errorData = await res.json()
-          throw new Error(errorData.error || 'Failed to analyze image')
+        const token = import.meta.env.VITE_GEMINI_API_KEY
+        if (!token) {
+          throw new Error('Missing VITE_GEMINI_API_KEY in .env file')
         }
 
-        const data = await res.json()
-        const lines: string[] = data.lines || []
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+
+        const genAI = new GoogleGenerativeAI(token);
+        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+        const prompt = "Extract all text from this image exactly as written. Do not include any markdown formatting or extra descriptions. Just the raw text.";
+
+        const imageParts = [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: blob.type
+            }
+          }
+        ];
+
+        const result = await model.generateContent([prompt, ...imageParts]);
+        const extractedText = result.response.text();
+
+        if (!extractedText) {
+          throw new Error('No text extracted from the image.')
+        }
+
+        setOcrErrorMsg('')
+        const lines = extractedText.split('\n').filter(l => l.trim() !== '')
         const cleaned = lines.join('\n').trim()
 
         setOcrRawText(cleaned)
@@ -72,9 +106,24 @@ export default function CameraScanner({ onSaveItem }: Props) {
             setBatchNo(extraction.batchNo)
             setBatchConfidence(extraction.confidence)
           }
+
+          // Extract Mfg Date
+          const mfgExtraction = extractMfgDate(lines)
+          if (mfgExtraction.date) {
+            setMfgDate(mfgExtraction.date)
+            setMfgConfidence(mfgExtraction.confidence)
+          }
+
+          // Extract Exp Date
+          const expExtraction = extractExpDate(lines)
+          if (expExtraction.date) {
+            setExpDate(expExtraction.date)
+            setExpConfidence(expExtraction.confidence)
+          }
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('OCR error:', err)
+        setOcrErrorMsg(err.message || 'Unknown error occurred')
         setOcrStatus('error')
       }
     },
@@ -86,6 +135,8 @@ export default function CameraScanner({ onSaveItem }: Props) {
     setCameraError(null)
     setCapturedImage(null)
     setBatchNo('')
+    setMfgDate('')
+    setExpDate('')
 
     try {
       const constraints: MediaStreamConstraints = {
@@ -152,8 +203,13 @@ export default function CameraScanner({ onSaveItem }: Props) {
     setCapturedImage(null)
     setProductName('')
     setBatchNo('')
+    setMfgDate('')
+    setExpDate('')
     setBatchConfidence('low')
+    setMfgConfidence('low')
+    setExpConfidence('low')
     setOcrStatus('idle')
+    setOcrErrorMsg('')
     setOcrRawText('')
     startCamera()
   }, [startCamera])
@@ -166,6 +222,8 @@ export default function CameraScanner({ onSaveItem }: Props) {
       id: crypto.randomUUID(),
       productName: productName.trim(),
       batchNo,
+      mfgDate,
+      expDate,
       timestamp: Date.now(),
       thumbnail: capturedImage,
     }
@@ -181,8 +239,13 @@ export default function CameraScanner({ onSaveItem }: Props) {
       setCapturedImage(null)
       setProductName('')
       setBatchNo('')
+      setMfgDate('')
+      setExpDate('')
       setBatchConfidence('low')
+      setMfgConfidence('low')
+      setExpConfidence('low')
       setOcrStatus('idle')
+      setOcrErrorMsg('')
       setOcrRawText('')
       startCamera()
     }, 600)
@@ -377,7 +440,7 @@ export default function CameraScanner({ onSaveItem }: Props) {
 
         {/* ── OCR Status Pill (below viewport) ────────── */}
         {ocrLabel && capturedImage && (
-          <div className="flex justify-center mt-2.5 animate-fade-in">
+          <div className="flex flex-col items-center justify-center mt-2.5 animate-fade-in">
             <span
               className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide ${
                 ocrStatus === 'scanning'
@@ -399,6 +462,11 @@ export default function CameraScanner({ onSaveItem }: Props) {
               )}
               {ocrLabel}
             </span>
+            {ocrStatus === 'error' && ocrErrorMsg && (
+              <p className="w-full mt-2 text-center text-xs font-medium text-red-400">
+                {ocrErrorMsg}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -471,6 +539,59 @@ export default function CameraScanner({ onSaveItem }: Props) {
                              : 'border-white/5'
                        }`}
           />
+        </div>
+
+        {/* Mfg & Exp Dates (Side by side) */}
+        <div className="flex gap-3">
+          <div className="group flex-1">
+            <label className="block text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1.5 ml-1 group-focus-within:text-primary-400 transition-colors">
+              Mfg Date
+              {ocrStatus === 'done' && mfgDate && mfgConfidence !== 'low' && (
+                <span className={`block mt-0.5 normal-case tracking-normal text-[10px] font-medium ${mfgConfidence === 'high' ? 'text-emerald-400/80' : 'text-amber-400/80'}`}>
+                  {mfgConfidence === 'high' ? '✦ extracted' : '✦ check value'}
+                </span>
+              )}
+            </label>
+            <input
+              type="text"
+              value={mfgDate}
+              onChange={(e) => setMfgDate(e.target.value)}
+              placeholder="e.g. APR-26"
+              className={`focus-ring w-full px-4 py-3 rounded-xl bg-surface-800/80 border
+                         text-white placeholder-surface-500 text-sm font-medium
+                         hover:border-white/10 focus:border-primary-500/40 focus:bg-surface-800
+                         transition-all duration-200 ${
+                           ocrStatus === 'done' && mfgDate && mfgConfidence === 'high' ? 'border-emerald-500/20'
+                             : ocrStatus === 'done' && mfgDate && mfgConfidence === 'medium' ? 'border-amber-500/20'
+                             : 'border-white/5'
+                         }`}
+            />
+          </div>
+
+          <div className="group flex-1">
+            <label className="block text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1.5 ml-1 group-focus-within:text-primary-400 transition-colors">
+              Exp Date
+              {ocrStatus === 'done' && expDate && expConfidence !== 'low' && (
+                <span className={`block mt-0.5 normal-case tracking-normal text-[10px] font-medium ${expConfidence === 'high' ? 'text-emerald-400/80' : 'text-amber-400/80'}`}>
+                  {expConfidence === 'high' ? '✦ extracted' : '✦ check value'}
+                </span>
+              )}
+            </label>
+            <input
+              type="text"
+              value={expDate}
+              onChange={(e) => setExpDate(e.target.value)}
+              placeholder="e.g. MAR-30"
+              className={`focus-ring w-full px-4 py-3 rounded-xl bg-surface-800/80 border
+                         text-white placeholder-surface-500 text-sm font-medium
+                         hover:border-white/10 focus:border-primary-500/40 focus:bg-surface-800
+                         transition-all duration-200 ${
+                           ocrStatus === 'done' && expDate && expConfidence === 'high' ? 'border-emerald-500/20'
+                             : ocrStatus === 'done' && expDate && expConfidence === 'medium' ? 'border-amber-500/20'
+                             : 'border-white/5'
+                         }`}
+            />
+          </div>
         </div>
 
         {/* ── OCR Extracted Text (collapsible) ────────────── */}

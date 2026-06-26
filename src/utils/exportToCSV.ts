@@ -29,7 +29,7 @@ export function exportItemsToCsv(items: SavedItem[], filename = 'inventory_repor
   if (!items || items.length === 0) return
 
   // Define headers
-  const headers = ['ID', 'Date/Time', 'Product Name', 'Batch Number']
+  const headers = ['ID', 'Date/Time', 'Product Name', 'Batch Number', 'Mfg Date', 'Exp Date']
 
   // Create rows
   const rows = items.map((item) => {
@@ -38,6 +38,8 @@ export function exportItemsToCsv(items: SavedItem[], filename = 'inventory_repor
       escapeCsv(formatTimestampForCsv(item.timestamp)),
       escapeCsv(item.productName),
       escapeCsv(item.batchNo),
+      escapeCsv(item.mfgDate || ''),
+      escapeCsv(item.expDate || ''),
     ].join(',')
   })
 

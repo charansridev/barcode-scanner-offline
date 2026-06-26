@@ -160,6 +160,9 @@ export default function HistoryScreen({ items, onDeleteItem, onBack }: Props) {
                     <th className="px-5 py-3.5 text-[11px] font-bold text-surface-400 uppercase tracking-widest">
                       Batch Number
                     </th>
+                    <th className="px-5 py-3.5 text-[11px] font-bold text-surface-400 uppercase tracking-widest">
+                      Dates
+                    </th>
                     <th className="px-5 py-3.5 text-[11px] font-bold text-surface-400 uppercase tracking-widest text-right">
                       Actions
                     </th>
@@ -202,6 +205,18 @@ export default function HistoryScreen({ items, onDeleteItem, onBack }: Props) {
                         <span className="inline-flex px-2.5 py-1 rounded-lg bg-primary-500/10 text-xs font-mono font-semibold text-primary-400 border border-primary-500/10">
                           {item.batchNo || '—'}
                         </span>
+                      </td>
+
+                      {/* Mfg/Exp Dates */}
+                      <td className="px-5 py-4">
+                        <div className="flex flex-col gap-1">
+                          {item.mfgDate ? (
+                            <span className="text-[11px] text-surface-300 font-medium whitespace-nowrap"><span className="text-surface-500 mr-1">Mfg:</span>{item.mfgDate}</span>
+                          ) : <span className="text-[11px] text-surface-600 font-medium whitespace-nowrap"><span className="mr-1">Mfg:</span>—</span>}
+                          {item.expDate ? (
+                            <span className="text-[11px] text-emerald-400 font-medium whitespace-nowrap"><span className="text-surface-500 mr-1">Exp:</span>{item.expDate}</span>
+                          ) : <span className="text-[11px] text-surface-600 font-medium whitespace-nowrap"><span className="mr-1">Exp:</span>—</span>}
+                        </div>
                       </td>
 
                       {/* Actions */}
@@ -305,12 +320,24 @@ export default function HistoryScreen({ items, onDeleteItem, onBack }: Props) {
                     {item.productName}
                   </p>
 
-                  {/* Batch number */}
-                  {item.batchNo && (
-                    <span className="inline-flex mt-2 px-2.5 py-1 rounded-lg bg-primary-500/10 text-[11px] font-mono font-semibold text-primary-400 border border-primary-500/10">
-                      {item.batchNo}
-                    </span>
-                  )}
+                  {/* Details row */}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {item.batchNo && (
+                      <span className="inline-flex px-2 py-1 rounded-md bg-primary-500/10 text-[10px] font-mono font-semibold text-primary-400 border border-primary-500/10">
+                        Batch: {item.batchNo}
+                      </span>
+                    )}
+                    {item.mfgDate && (
+                      <span className="inline-flex px-2 py-1 rounded-md bg-surface-800 text-[10px] font-semibold text-surface-300 border border-surface-700">
+                        Mfg: {item.mfgDate}
+                      </span>
+                    )}
+                    {item.expDate && (
+                      <span className="inline-flex px-2 py-1 rounded-md bg-emerald-500/10 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
+                        Exp: {item.expDate}
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
