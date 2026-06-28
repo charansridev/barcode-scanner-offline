@@ -31,4 +31,13 @@ export default defineConfig({
       }
     })
   ],
+  server: {
+    proxy: {
+      '/hf-proxy': {
+        target: 'https://hf-mirror.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/hf-proxy/, '')
+      }
+    }
+  },
 })

@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/hf-proxy/(.*)",
+      "destination": "https://hf-mirror.com/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

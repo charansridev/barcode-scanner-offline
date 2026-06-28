@@ -1,5 +1,4 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
-import { GoogleGenerativeAI } from "@google/generative-ai"
 import type { SavedItem } from '../App'
 import { extractBatchNumber } from '../utils/extractBatchNumber'
 import type { BatchExtractionResult } from '../utils/extractBatchNumber'
@@ -16,6 +15,7 @@ export default function CameraScanner({ onSaveItem }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [isStreaming, setIsStreaming] = useState(false)
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
@@ -34,9 +34,86 @@ export default function CameraScanner({ onSaveItem }: Props) {
   const [expDate, setExpDate] = useState('')
   const [expConfidence, setExpConfidence] = useState<DateExtractionResult['confidence']>('low')
 
-  /* ── Run OCR on Canvas via Vercel Backend ─────────────── */
+  // Model state
+  const [modelStatus, setModelStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [modelProgress, setModelProgress] = useState(0)
+  const workerRef = useRef<Worker | null>(null)
+
+  useEffect(() => {
+    workerRef.current = new Worker(new URL('../worker.ts', import.meta.url), { type: 'module' })
+    
+    workerRef.current.onmessage = (e) => {
+      const { status, progress, result, error } = e.data
+      
+      if (status === 'progress') {
+        if (progress?.progress) setModelProgress(Math.round(progress.progress))
+      } else if (status === 'ready') {
+        setModelStatus('ready')
+      } else if (status === 'error') {
+        setModelStatus('error')
+        console.error('Model error:', error)
+        if (ocrStatus === 'scanning') {
+           setOcrStatus('error')
+           setOcrErrorMsg(error || 'Model error occurred')
+        }
+      } else if (status === 'complete') {
+        const extractedText = result
+        if (!extractedText) {
+          setOcrErrorMsg('No text extracted from the image.')
+          setOcrStatus('error')
+          return
+        }
+
+        setOcrErrorMsg('')
+        const lines = extractedText.split('\n').filter((l: string) => l.trim() !== '')
+        const cleaned = lines.join('\n').trim()
+
+        setOcrRawText(cleaned)
+        setOcrStatus('done')
+
+        if (cleaned) {
+          const nonEmptyLines = lines.map((l: string) => l.trim()).filter(Boolean)
+          if (nonEmptyLines.length > 0) {
+            setProductName(nonEmptyLines[0])
+          }
+
+          const extraction = extractBatchNumber(cleaned)
+          if (extraction.batchNo) {
+            setBatchNo(extraction.batchNo)
+            setBatchConfidence(extraction.confidence)
+          }
+
+          const mfgExtraction = extractMfgDate(lines)
+          if (mfgExtraction.date) {
+            setMfgDate(mfgExtraction.date)
+            setMfgConfidence(mfgExtraction.confidence)
+          }
+
+          const expExtraction = extractExpDate(lines)
+          if (expExtraction.date) {
+            setExpDate(expExtraction.date)
+            setExpConfidence(expExtraction.confidence)
+          }
+        }
+      }
+    }
+    
+    workerRef.current.postMessage({ action: 'load' })
+    
+    return () => {
+      workerRef.current?.terminate()
+    }
+  }, [])
+
+  /* ── Run OCR via Web Worker ─────────────── */
   const runOcr = useCallback(
     async (canvas: HTMLCanvasElement) => {
+      if (modelStatus !== 'ready') {
+         setOcrStatus('error')
+         setOcrErrorMsg('Model is still loading, please wait...')
+         return
+      }
+
       setOcrStatus('scanning')
       setOcrErrorMsg('')
       setOcrRawText('')
@@ -45,89 +122,17 @@ export default function CameraScanner({ onSaveItem }: Props) {
       setExpConfidence('low')
 
       try {
-        const blob = await new Promise<Blob | null>((resolve) => 
-          canvas.toBlob(resolve, 'image/jpeg', 0.85)
-        )
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
         
-        if (!blob) throw new Error('Failed to create image blob')
-        
-        const token = import.meta.env.VITE_GEMINI_API_KEY
-        if (!token) {
-          throw new Error('Missing VITE_GEMINI_API_KEY in .env file')
-        }
-
-        const base64Data = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const result = reader.result as string;
-            resolve(result.split(',')[1]);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-
-        const genAI = new GoogleGenerativeAI(token);
-        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-        const prompt = "Extract all text from this image exactly as written. Do not include any markdown formatting or extra descriptions. Just the raw text.";
-
-        const imageParts = [
-          {
-            inlineData: {
-              data: base64Data,
-              mimeType: blob.type
-            }
-          }
-        ];
-
-        const result = await model.generateContent([prompt, ...imageParts]);
-        const extractedText = result.response.text();
-
-        if (!extractedText) {
-          throw new Error('No text extracted from the image.')
-        }
-
-        setOcrErrorMsg('')
-        const lines = extractedText.split('\n').filter(l => l.trim() !== '')
-        const cleaned = lines.join('\n').trim()
-
-        setOcrRawText(cleaned)
-        setOcrStatus('done')
-
-        // Auto-fill product name with the first non-empty line
-        if (cleaned) {
-          const nonEmptyLines = lines.map((l) => l.trim()).filter(Boolean)
-          if (nonEmptyLines.length > 0) {
-            setProductName(nonEmptyLines[0])
-          }
-
-          // Extract batch number from OCR text
-          const extraction = extractBatchNumber(cleaned)
-          if (extraction.batchNo) {
-            setBatchNo(extraction.batchNo)
-            setBatchConfidence(extraction.confidence)
-          }
-
-          // Extract Mfg Date
-          const mfgExtraction = extractMfgDate(lines)
-          if (mfgExtraction.date) {
-            setMfgDate(mfgExtraction.date)
-            setMfgConfidence(mfgExtraction.confidence)
-          }
-
-          // Extract Exp Date
-          const expExtraction = extractExpDate(lines)
-          if (expExtraction.date) {
-            setExpDate(expExtraction.date)
-            setExpConfidence(expExtraction.confidence)
-          }
-        }
+        const prompt = "Extract all text from this image exactly as written. Do not include any markdown formatting or extra descriptions. Just the raw text."
+        workerRef.current?.postMessage({ action: 'predict', image: dataUrl, text: prompt })
       } catch (err: any) {
         console.error('OCR error:', err)
         setOcrErrorMsg(err.message || 'Unknown error occurred')
         setOcrStatus('error')
       }
     },
-    []
+    [modelStatus]
   )
 
   /* ── Start Camera ──────────────────────────────────────── */
@@ -174,6 +179,31 @@ export default function CameraScanner({ onSaveItem }: Props) {
   }, [])
 
   /* ── Capture Frame & Trigger OCR ───────────────────────── */
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string
+      setCapturedImage(dataUrl)
+      stopCamera()
+
+      const img = new Image()
+      img.onload = () => {
+        if (!canvasRef.current) return
+        const canvas = canvasRef.current
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        ctx?.drawImage(img, 0, 0)
+        runOcr(canvas)
+      }
+      img.src = dataUrl
+    }
+    reader.readAsDataURL(file)
+  }
+
   const captureFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return
 
@@ -272,8 +302,30 @@ export default function CameraScanner({ onSaveItem }: Props) {
   })()
 
   return (
-    <div className="flex-1 flex flex-col max-w-lg mx-auto w-full animate-fade-in">
-      {/* ── Camera Viewport ──────────────────────────────── */}
+    <div className="w-full max-w-md mx-auto flex flex-col h-full overflow-hidden bg-surface-900 relative">
+      {/* ── Model Loading Progress ────────────────────────────── */}
+      {(modelStatus === 'loading' || modelStatus === 'error') && (
+        <div className={`absolute top-0 left-0 w-full z-50 backdrop-blur-md border-b px-4 py-3 shadow-lg ${modelStatus === 'error' ? 'bg-red-600/20 border-red-500/20' : 'bg-primary-600/20 border-primary-500/20'}`}>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className={`text-xs font-semibold ${modelStatus === 'error' ? 'text-red-300' : 'text-primary-300'}`}>
+              {modelStatus === 'error' ? 'Model Download Failed' : 'Downloading Offline AI Model (One-time)'}
+            </span>
+            {modelStatus === 'loading' && <span className="text-xs font-bold text-white">{modelProgress}%</span>}
+          </div>
+          {modelStatus === 'loading' ? (
+            <div className="w-full bg-surface-800 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-gradient-to-r from-primary-500 to-primary-400 h-1.5 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${modelProgress}%` }}
+              ></div>
+            </div>
+          ) : (
+             <p className="text-[10px] text-red-200">{ocrErrorMsg || 'Please refresh to try again. Make sure your internet allows downloading from Hugging Face.'}</p>
+          )}
+        </div>
+      )}
+
+      {/* ── Scanner View (Camera or Captured Image) ──────────── */}
       <div className="relative px-4 pt-4">
         <div
           id="camera-viewport"
@@ -420,16 +472,39 @@ export default function CameraScanner({ onSaveItem }: Props) {
 
           {/* ── Capture Button (floating) ──────────────── */}
           {isStreaming && !capturedImage && (
-            <button
-              id="btn-capture"
-              onClick={captureFrame}
-              className="absolute bottom-4 left-1/2 -translate-x-1/2 group btn-press"
-              aria-label="Capture photo"
-            >
-              <div className="w-14 h-14 rounded-full bg-white/90 group-hover:bg-white border-4 border-white/30 group-hover:border-primary-400/50 shadow-lg group-hover:shadow-glow transition-all duration-200 flex items-center justify-center">
-                <div className="w-10 h-10 rounded-full bg-white border-2 border-surface-200 group-hover:border-primary-300 transition-colors" />
-              </div>
-            </button>
+            <>
+              <button
+                id="btn-capture"
+                onClick={captureFrame}
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 group btn-press"
+                aria-label="Capture photo"
+              >
+                <div className="w-14 h-14 rounded-full bg-white/90 group-hover:bg-white border-4 border-white/30 group-hover:border-primary-400/50 shadow-lg group-hover:shadow-glow transition-all duration-200 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full bg-white border-2 border-surface-200 group-hover:border-primary-300 transition-colors" />
+                </div>
+              </button>
+
+              {/* Upload Image Button */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute bottom-6 right-6 p-3 rounded-full bg-surface-800/80 hover:bg-surface-700 backdrop-blur-sm border border-white/10 text-white shadow-lg transition-all btn-press"
+                aria-label="Upload image"
+                title="Upload Image"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+              </button>
+              <input 
+                type="file"
+                accept="image/*"
+                ref={fileInputRef}
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+            </>
           )}
 
           {/* ── Save Flash ─────────────────────────────── */}
