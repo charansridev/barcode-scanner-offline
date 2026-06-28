@@ -28,16 +28,10 @@ export default defineConfig({
             purpose: 'any maskable'
           }
         ]
+      },
+      workbox: {
+        maximumFileSizeToCacheInBytes: 100 * 1024 * 1024,
       }
     })
-  ],
-  server: {
-    proxy: {
-      '/hf-proxy': {
-        target: 'https://hf-mirror.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/hf-proxy/, '')
-      }
-    }
-  },
+  ]
 })
