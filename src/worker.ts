@@ -7,7 +7,7 @@ let model: any = null;
 let processor: any = null;
 
 self.onmessage = async (e: MessageEvent) => {
-    const { action, image, text } = e.data;
+    const { action, image } = e.data;
 
     if (action === 'load') {
         try {
